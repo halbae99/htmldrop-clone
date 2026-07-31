@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>htmldrop</title>
+  <script>
+    // Simple SPA redirect for GitHub Pages
+    // Store the attempted path and redirect to index.html
+    sessionStorage.setItem('redirect', location.pathname + location.search + location.hash);
+    location.replace('/htmldrop-clone/');
+  </script>
+</head>
+<body></body>
+</html>
