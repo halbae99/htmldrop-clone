@@ -1,5 +1,56 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileText, CheckCircle2, Copy, ExternalLink, ArrowRight, Shield, Calendar, RefreshCw, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { Upload, FileText, CheckCircle2, Copy, ExternalLink, ArrowRight, Shield, Calendar, RefreshCw, AlertTriangle, ArrowLeft, Download, FileIcon } from 'lucide-react';
+
+// MIME type mapping for file extensions
+const MIME_MAP = {
+  html: 'text/html; charset=utf-8',
+  htm: 'text/html; charset=utf-8',
+  md: 'text/markdown; charset=utf-8',
+  txt: 'text/plain; charset=utf-8',
+  pdf: 'application/pdf',
+  hwp: 'application/haansofthwp',
+  hwpx: 'application/haansofthwpx',
+};
+
+// Text-based files that can be read with file.text()
+const TEXT_EXTENSIONS = ['html', 'htm', 'md', 'txt'];
+
+// Binary files that need Base64 encoding
+const BINARY_EXTENSIONS = ['pdf', 'hwp', 'hwpx'];
+
+// All supported extensions
+const SUPPORTED_EXTENSIONS = [...TEXT_EXTENSIONS, ...BINARY_EXTENSIONS];
+
+function getExtension(filename) {
+  return (filename.split('.').pop() || '').toLowerCase();
+}
+
+function getMimeType(filename) {
+  const ext = getExtension(filename);
+  return MIME_MAP[ext] || 'application/octet-stream';
+}
+
+function isTextFile(filename) {
+  return TEXT_EXTENSIONS.includes(getExtension(filename));
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 function App() {
   const [dragActive, setDragActive] = useState(false);
@@ -10,6 +61,8 @@ function App() {
   const [ttlDays, setTtlDays] = useState('7');
   const [publishResult, setPublishResult] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [mimeType, setMimeType] = useState('text/html; charset=utf-8');
+  const [currentFile, setCurrentFile] = useState(null);
 
   // View state for published links (Client side routing simulation or Direct Preview)
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
@@ -74,38 +127,65 @@ function App() {
     }
   };
 
+  const processFile = async (file) => {
+    const fileName = file.name;
+    const ext = getExtension(fileName);
+    
+    if (!SUPPORTED_EXTENSIONS.includes(ext)) {
+      alert(`지원하지 않는 파일 형식입니다: .${ext}\n지원 형식: ${SUPPORTED_EXTENSIONS.map(e => '.' + e).join(', ')}`);
+      return;
+    }
+
+    const detectedMime = getMimeType(fileName);
+    setMimeType(detectedMime);
+    setCurrentFile(file);
+
+    if (isTextFile(fileName)) {
+      const text = await readFileAsText(file);
+      setContent(text);
+    } else {
+      // Binary file: convert to Base64 data URI
+      const dataUri = await readFileAsDataURL(file);
+      setContent(dataUri);
+    }
+    
+    setTitle(fileName.replace(/\.[^/.]+$/, ""));
+  };
+
   const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      const text = await file.text();
-      setContent(text);
-      setTitle(file.name.replace(/\.[^/.]+$/, ""));
+      await processFile(e.dataTransfer.files[0]);
     }
   };
 
   const handleFileInput = async (e) => {
     if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const text = await file.text();
-      setContent(text);
-      setTitle(file.name.replace(/\.[^/.]+$/, ""));
+      await processFile(e.target.files[0]);
     }
   };
 
+  const handlePasteContent = (text) => {
+    setContent(text);
+    setMimeType('text/html; charset=utf-8');
+    setTitle('Pasted Content');
+    setCurrentFile(null);
+  };
+
   const handlePublish = async () => {
-    if (!content) preturn;
+    if (!content) return;
     setUploadStatus('uploading');
     try {
-      const response = await file('/.netlify/functions/publish', {
+      const response = await fetch('/.netlify/functions/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content,
           title: title || 'Untitled Drop',
+          mimeType,
           ttlDays,
           password: password || null
         })
@@ -143,6 +223,9 @@ function App() {
     setCurrentPath(path);
   };
 
+  // Helper to check if content is a data URI (binary)
+  const isDataUri = (str) => str && str.startsWith('data:');
+
   // 1. VIEW VIEW MODE (Rendering actual dropped content)
   if (currentPath.startsWith('/view/')) {
     const dropId = currentPath.split('/view/')[1];
@@ -152,18 +235,18 @@ function App() {
         {viewStatus === 'loading' && (
           <div className="flex flex-col items-center gap-3">
             <RefreshCw className="animate-spin text-cyan-400 w-10 h-10" />
-            <p className="text-gray-400">\ud398\uc774\uc9c0\ub97c \ub85c\ub4dc\ud558\uace0 \uc788\uc2b5\ub2c8\ub2e4...</p>
+            <p className="text-gray-400">페이지를 로드하고 있습니다...</p>
           </div>
         )}
 
         {viewStatus === 'password_required' && (
           <div className="bg-[#0f1626] border border-[#1e293b] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
-            <Shield className="w-12 h-12 text-yellow-500 mx-auto m`^4" />
-            <h2 className="text-xl font-bold mb-2 text-white">\ube44\ubc00\ubc88\ud638\uac00 \ud544\uc694\ud569\ub2c8\ub2e4</h2>
-            <p className="text-gray-400 text-sm mb-6">\uc774 \ud398\uc774\uc9c0\ub294 \ubcf4\ud638\ub418\uc5b4 \uc788\uc2b5\ub2c8\ub2e4. \ube44\ubc00\ubc88\ud638\ub97c \uc785\ub825\ud574\uc8fc\uc138\uc694.</p>
+            <Shield className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
+            <h2 className="text-xl font-bold mb-2 text-white">비밀번호가 필요합니다</h2>
+            <p className="text-gray-400 text-sm mb-6">이 페이지는 보호되어 있습니다. 비밀번호를 입력해주세요.</p>
             <input
               type="password"
-              placeholder="\ube44\ubc00\ubc88\ud638"
+              placeholder="비밀번호"
               value={viewPassword}
               onChange={(e) => setViewPassword(e.target.value)}
               className="w-full bg-[#172033] border border-[#2d3d5a] text-white px-4 py-3 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-cyan-500"
@@ -172,7 +255,7 @@ function App() {
               onClick={() => fetchPage(dropId, viewPassword)}
               className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-semibold py-3 rounded-lg transition"
             >
-              \ud655\uc778
+              확인
             </button>
           </div>
         )}
@@ -180,37 +263,330 @@ function App() {
         {viewStatus === 'error' && (
           <div className="bg-[#0f1626] border border-[#1e293b] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
             <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h2 className="text-xl font-bold mb-2 text-white">\ucc3e\uc744 \uc218 \uc5c6\uac70\ub098 \ub9cc\ub8cc\ub41c \ud398\uc774\uc9c0</h2>
-            <p className="text-gray-400 text-sm mb-6">\uc874\uc7ac\ud558\uc9c0 \uc54a\ub294 \ud398\uc774\uc9c0\uc774\uac70\ub098 \ubcf4\uc874 \uae30\uac04(TTL)\uc774 \ub9cc\ub8cc\ub418\uc5c8\uc2b5\ub2c8\ub2e4.</p>
+            <h2 className="text-xl font-bold mb-2 text-white">찾을 수 없거나 만료된 페이지</h2>
+            <p className="text-gray-400 text-sm mb-6">존재하지 않는 페이지이거나 보존 기간(TTL)이 만료되었습니다.</p>
             <button
               onClick={() => navigateTo('/')}
               className="inline-flex items-center gap-2 text-cyan-400 hover:text-cyan-300 font-semibold"
             >
-              <ArrowLeft className="w-4 h-4" /> \ud648\uc73c\ub85c \uc774\ub3d9
+              <ArrowLeft className="w-4 h-4" /> 홈으로 이동
             </button>
           </div>
         )}
 
-        {viewStatus === 'ready' && viewData && (
-          <div className="w-full min-h-screen flex flex-col bg-white text-black">
-            {/* Minimal banner showing that this is a temporary htmldrop */}
-            <div className="bg-[#0f1626] text-gray-300 text-xs px-4 py-2 flex justify-between items-center border-b border-[#1e293b]">
-              <span className="font-semibold flex items-center gap-1.5 text-cyan-400 cursor-pointer" onClick={() => navigateTo('/')}>
-                \ud83d\udca7 htmldrop <span className="text-gray-500">| {viewData.title}</span>
-              </span>
-              <span className="text-gray-400">\ub9cc\ub8cc\uc77c: {new Date(viewData.expires_at).toLocaleDateString()}</span>
+        {viewStatus === 'ready' && viewData && (() => {
+          const vmime = viewData.mimeType || 'text/html';
+          const isPdf = vmime.includes('pdf');
+          const isHwp = vmime.includes('haansoft');
+          const isDataUriContent = isDataUri(viewData.content);
+
+          // HWP/HWPX: Google Docs Viewer + download
+          if (isHwp) {
+            return (
+              <div className="w-full min-h-screen flex flex-col bg-[#0f1626]">
+                <div className="bg-[#0f1626] text-gray-300 text-xs px-4 py-2 flex justify-between items-center border-b border-[#1e293b]">
+                  <span className="font-semibold flex items-center gap-1.5 text-cyan-400 cursor-pointer" onClick={() => navigateTo('/')}>
+                    💧 htmldrop <span className="text-gray-500">| {viewData.title}</span>
+                  </span>
+                  <span className="text-gray-400">만료일: {new Date(viewData.expires_at).toLocaleDateString()}</span>
+                </div>
+                <div className="flex-1 flex flex-col items-center justify-center p-8 gap-6">
+                  <FileIcon className="w-20 h-20 text-gray-500" />
+                  <h3 className="text-xl font-bold text-white">{viewData.title}</h3>
+                  <p className="text-gray-400 text-sm">
+                    HWP/HWPX 파일입니다. 브라우저에서 직접 미리보기가 불가능합니다.
+                  </p>
+                  <div className="flex gap-4 flex-wrap justify-center">
+                    <a
+                      href={viewData.content}
+                      download={viewData.title}
+                      className="inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-600 text-white font-semibold px-6 py-3 rounded-lg transition"
+                    >
+                      <Download className="w-4 h-4" /> 파일 다운로드
+                    </a>
+                    <button
+                      onClick={() => {
+                        // Google Docs Viewer — requires the file to be accessible via URL
+                        // For data URIs, open in new tab for download
+                        window.open(viewData.content, '_blank');
+                      }}
+                      className="inline-flex items-center gap-2 bg-[#1e293b] hover:bg-[#2d3d5a] text-gray-300 font-semibold px-6 py-3 rounded-lg transition"
+                    >
+                      <ExternalLink className="w-4 h-4" /> 새 탭에서 열기
+                    </button>
+                  </div>
+                  <p className="text-gray-500 text-xs mt-4">
+                    * Google Docs Viewer는 다운로드된 파일을 열 때만 작동합니다. 파일을 먼저 다운로드해주세요.
+                  </p>
+                </div>
+              </div>
+            );
+          }
+
+          // PDF: browser native viewer + download
+          if (isPdf && isDataUriContent) {
+            return (
+              <div className="w-full min-h-screen flex flex-col bg-white">
+                <div className="bg-[#0f1626] text-gray-300 text-xs px-4 py-2 flex justify-between items-center border-b border-[#1e293b]">
+                  <span className="font-semibold flex items-center gap-1.5 text-cyan-400 cursor-pointer" onClick={() => navigateTo('/')}>
+                    💧 htmldrop <span className="text-gray-500">| {viewData.title}</span>
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <a
+                      href={viewData.content}
+                      download={viewData.title}
+                      className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 text-xs"
+                    >
+                      <Download className="w-3 h-3" /> 다운로드
+                    </a>
+                    <span className="text-gray-400">만료일: {new Date(viewData.expires_at).toLocaleDateString()}</span>
+                  </div>
+                </div>
+                <iframe
+                  src={viewData.content}
+                  title={viewData.title}
+                  className="w-full flex-1 border-none bg-white"
+                />
+              </div>
+            );
+          }
+
+          // HTML / MD / TXT: render in iframe
+          return (
+            <div className="w-full min-h-screen flex flex-col bg-white text-black">
+              <div className="bg-[#0f1626] text-gray-300 text-xs px-4 py-2 flex justify-between items-center border-b border-[#1e293b]">
+                <span className="font-semibold flex items-center gap-1.5 text-cyan-400 cursor-pointer" onClick={() => navigateTo('/')}>
+                  💧 htmldrop <span className="text-gray-500">| {viewData.title}</span>
+                </span>
+                <span className="text-gray-400">만료일: {new Date(viewData.expires_at).toLocaleDateString()}</span>
+              </div>
+              <iframe
+                srcDoc={viewData.content}
+                title={viewData.title}
+                className="w-full flex-1 border-none bg-white"
+                sandbox="allow-scripts allow-same-origin"
+              />
             </div>
-            <iframe
-              srcDoc={viewData.content}
-              title={viewData.title}
-              className="w-full flex-1 border-none bg-white"
-              sandbox="allow-scripts allow-same-origin"
-           />
+          );
+        })()}
+      </div>
+    );
+  }
+
+  // MAIN CREATOR INTERFACE
+  return (
+    <div className="min-h-screen bg-[#070a13] flex flex-col items-center pt-8 pb-16 px-4">
+      {/* Header */}
+      <div className="text-center mb-10">
+        <div className="inline-flex items-center gap-2 mb-3">
+          <span className="text-3xl">💧</span>
+          <h1 className="text-3xl font-bold text-white">htmldrop</h1>
+        </div>
+        <p className="text-gray-400 text-sm">Temporary publishing — 설치 없이 바로 공유</p>
+        <p className="text-gray-500 text-xs mt-1">Publish at the speed of thought</p>
+      </div>
+
+      {/* Main Card */}
+      <div className="w-full max-w-2xl bg-[#0f1626] border border-[#1e293b] rounded-2xl p-6 shadow-2xl">
+        {/* Step indicators */}
+        <div className="flex items-center justify-center gap-2 mb-8 text-xs text-gray-500">
+          <span className="bg-cyan-500/20 text-cyan-400 px-3 py-1 rounded-full font-semibold">01 파일 선택</span>
+          <ArrowRight className="w-3 h-3" />
+          <span className="bg-[#1e293b] px-3 py-1 rounded-full">02 옵션 설정</span>
+          <ArrowRight className="w-3 h-3" />
+          <span className="bg-[#1e293b] px-3 py-1 rounded-full">03 링크 공유</span>
+        </div>
+
+        {/* Drop Zone */}
+        <div
+          className={`border-2 border-dashed rounded-xl p-10 text-center transition-all cursor-pointer mb-6 ${
+            dragActive
+              ? 'border-cyan-400 bg-cyan-400/10'
+              : 'border-[#2d3d5a] hover:border-gray-500 bg-[#0a0f1a]'
+          }`}
+          onDragEnter={handleDrag}
+          onDragLeave={handleDrag}
+          onDragOver={handleDrag}
+          onDrop={handleDrop}
+          onClick={() => document.getElementById('fileInput').click()}
+        >
+          {content ? (
+            <div className="flex flex-col items-center gap-2">
+              <CheckCircle2 className="w-10 h-10 text-green-400" />
+              <p className="text-white font-semibold">{currentFile ? currentFile.name : '코드 붙여넣기 완료'}</p>
+              <p className="text-gray-400 text-xs">
+                {currentFile 
+                  ? `${getExtension(currentFile.name).toUpperCase()} 파일 · ${(currentFile.size / 1024).toFixed(1)} KB`
+                  : `${content.length.toLocaleString()} 자`}
+              </p>
+              <button
+                onClick={(e) => { e.stopPropagation(); setContent(''); setCurrentFile(null); }}
+                className="text-xs text-red-400 hover:text-red-300 mt-1"
+              >
+                변경하기
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3">
+              <Upload className="w-10 h-10 text-gray-500" />
+              <p className="text-white font-semibold">파일을 끌어다 놓으세요</p>
+              <p className="text-gray-400 text-xs">또는 클릭해서 파일 선택</p>
+              <p className="text-gray-500 text-xs mt-1">
+                · {SUPPORTED_EXTENSIONS.map(e => '.' + e).join(' / ')}
+              </p>
+            </div>
+          )}
+          <input
+            id="fileInput"
+            type="file"
+            className="hidden"
+            accept={SUPPORTED_EXTENSIONS.map(e => '.' + e).join(',')}
+            onChange={handleFileInput}
+          />
+        </div>
+
+        {/* Paste code area */}
+        {!content && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <FileText className="w-4 h-4 text-gray-500" />
+              <span className="text-gray-400 text-xs">or paste code</span>
+            </div>
+            <textarea
+              placeholder="HTML / Markdown 코드를 여기에 붙여넣으세요..."
+              className="w-full bg-[#0a0f1a] border border-[#2d3d5a] text-gray-300 rounded-lg p-4 h-32 resize-y focus:outline-none focus:ring-2 focus:ring-cyan-500 text-sm"
+              onChange={(e) => {
+                if (e.target.value) {
+                  handlePasteContent(e.target.value);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {/* Options */}
+        {content && (
+          <div className="space-y-4 animate-fadeIn">
+            {/* Title */}
+            <div>
+              <label className="text-gray-400 text-xs mb-1 block">페이지 제목</label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="w-full bg-[#0a0f1a] border border-[#2d3d5a] text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                placeholder="제목을 입력하세요"
+              />
+            </div>
+
+            <div className="flex gap-4 flex-wrap">
+              {/* TTL */}
+              <div className="flex-1 min-w-[150px]">
+                <label className="text-gray-400 text-xs mb-1 flex items-center gap-1">
+                  <Calendar className="w-3 h-3" /> 보존 기간
+                </label>
+                <select
+                  value={ttlDays}
+                  onChange={(e) => setTtlDays(e.target.value)}
+                  className="w-full bg-[#0a0f1a] border border-[#2d3d5a] text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                >
+                  <option value="1">1일</option>
+                  <option value="7">7일</option>
+                  <option value="30">30일</option>
+                </select>
+              </div>
+
+              {/* Password */}
+              <div className="flex-1 min-w-[150px]">
+                <label className="text-gray-400 text-xs mb-1 flex items-center gap-1">
+                  <Shield className="w-3 h-3" /> 비밀번호 (선택)
+                </label>
+                <input
+                  type="text"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-[#0a0f1a] border border-[#2d3d5a] text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  placeholder="비밀번호 (없으면 공개)"
+                />
+              </div>
+            </div>
+
+            {/* Publish Button */}
+            {uploadStatus !== 'success' ? (
+              <button
+                onClick={handlePublish}
+                disabled={uploadStatus === 'uploading'}
+                className={`w-full font-semibold py-3 rounded-lg transition flex items-center justify-center gap-2 ${
+                  uploadStatus === 'uploading'
+                    ? 'bg-gray-600 text-gray-300 cursor-not-allowed'
+                    : 'bg-cyan-500 hover:bg-cyan-600 text-white'
+                }`}
+              >
+                {uploadStatus === 'uploading' ? (
+                  <>
+                    <RefreshCw className="animate-spin w-4 h-4" /> 업로드 중...
+                  </>
+                ) : (
+                  '공유 링크 만들기'
+                )}
+              </button>
+            ) : (
+              /* Success State */
+              <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-5 text-center space-y-3">
+                <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto" />
+                <p className="text-green-400 font-semibold">공유 링크가 생성되었습니다!</p>
+                <div className="flex items-center gap-2 bg-[#0a0f1a] border border-[#2d3d5a] rounded-lg px-4 py-2.5">
+                  <input
+                    type="text"
+                    value={publishResult?.url || ''}
+                    readOnly
+                    className="flex-1 bg-transparent text-white text-sm focus:outline-none"
+                  />
+                  <button
+                    onClick={copyToClipboard}
+                    className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 text-sm"
+                  >
+                    {copied ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copied ? '복사됨' : '복사'}
+                  </button>
+                </div>
+                <div className="flex gap-3 justify-center">
+                  <button
+                    onClick={() => navigateTo(publishResult?.url ? new URL(publishResult.url).pathname : '/')}
+                    className="inline-flex items-center gap-1.5 text-cyan-400 hover:text-cyan-300 text-sm font-semibold"
+                  >
+                    <ExternalLink className="w-4 h-4" /> 미리보기
+                  </button>
+                  <button
+                    onClick={() => {
+                      setContent('');
+                      setCurrentFile(null);
+                      setTitle('');
+                      setPassword('');
+                      setUploadStatus('idle');
+                      setPublishResult(null);
+                    }}
+                    className="text-gray-400 hover:text-gray-300 text-sm"
+                  >
+                    새로 만들기
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {uploadStatus === 'error' && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-center">
+                <p className="text-red-400 text-sm">업로드에 실패했습니다. 다시 시도해주세요.</p>
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {/* Footer */}
+      <p className="text-gray-600 text-xs mt-8">htmldrop clone · 파일은 {ttlDays}일 후 자동 삭제됩니다</p>
+    </div>
   );
 }
 
-// MAIN CREATOR INTERFACE
 export default App;

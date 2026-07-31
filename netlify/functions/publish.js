@@ -8,26 +8,63 @@ const { v4: uuidv4 } = require('uuid');
 // and fall back gracefully, instructing users how to easily hook Upstash Redis or Supabase for persistent stores.
 global.htmldropStore = global.htmldropStore || {};
 
+// MIME type to Content-Type mapping for raw responses
+// For text types: include charset=utf-8. For binary types: no charset.
+function getRawContentType(mimeType) {
+  const binaryTypes = [
+    'application/pdf',
+    'application/haansofthwp',
+    'application/haansofthwpx',
+    'application/octet-stream',
+    'image/',
+  ];
+
+  const isBinary = binaryTypes.some(t => mimeType.startsWith(t));
+  
+  if (isBinary) {
+    return mimeType;
+  }
+  
+  // Text types: ensure charset
+  if (mimeType.includes('charset')) {
+    return mimeType;
+  }
+  
+  return `${mimeType}; charset=utf-8`;
+}
+
+// Check if content is a Base64 data URI
+function isDataUri(content) {
+  return content && typeof content === 'string' && content.startsWith('data:');
+}
+
+// Convert data URI to raw Base64 content (strip the prefix)
+function stripDataUriPrefix(dataUri) {
+  const commaIndex = dataUri.indexOf(',');
+  if (commaIndex === -1) return dataUri;
+  return dataUri.substring(commaIndex + 1);
+}
+
 exports.handler = async (event, context) => {
   // CORS Headers
-  const headers = {
+  const jsonHeaders = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, x-drop-password',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Content-Type': 'application/json'
   };
 
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
+    return { statusCode: 200, headers: jsonHeaders, body: '' };
   }
 
   // 1. GET /publish?id=xxx - Retrieve raw file contents
   if (event.httpMethod === 'GET') {
-    const id = event.queryStringParameters.id;
+    const id = event.queryStringParameters && event.queryStringParameters.id;
     if (!id || !global.htmldropStore[id]) {
       return {
         statusCode: 404,
-        headers,
+        headers: jsonHeaders,
         body: JSON.stringify({ error: "Page not found or expired" })
       };
     }
@@ -39,39 +76,57 @@ exports.handler = async (event, context) => {
       delete global.htmldropStore[id];
       return {
         statusCode: 404,
-        headers,
+        headers: jsonHeaders,
         body: JSON.stringify({ error: "Page has expired" })
       };
     }
 
     // Password Protection Check
     if (item.password) {
-      const authPassword = event.headers['x-drop-password'] || event.queryStringParameters.password;
+      const authPassword = event.headers['x-drop-password'] || (event.queryStringParameters && event.queryStringParameters.password);
       if (authPassword !== item.password) {
         return {
           statusCode: 401,
-          headers,
+          headers: jsonHeaders,
           body: JSON.stringify({ error: "Password required", passwordProtected: true })
         };
       }
     }
 
-    // Return content
-    if (event.queryStringParameters.raw === 'true') {
+    // Return raw content (for direct file access)
+    if (event.queryStringParameters && event.queryStringParameters.raw === 'true') {
+      const mimeType = item.mimeType || 'text/html; charset=utf-8';
+      const rawContentType = getRawContentType(mimeType);
+      
+      let bodyContent = item.content;
+      let isBase64 = false;
+
+      // For binary files stored as data URIs, decode to raw binary
+      if (isDataUri(item.content)) {
+        bodyContent = stripDataUriPrefix(item.content);
+        isBase64 = true;
+      }
+
       const responseHeaders = {
         'Access-Control-Allow-Origin': '*',
-        'Content-Type': item.mimeType || 'text/html; charset=utf-8'
+        'Content-Type': rawContentType,
       };
+
+      if (isBase64) {
+        responseHeaders['Content-Transfer-Encoding'] = 'base64';
+      }
+
       return {
         statusCode: 200,
         headers: responseHeaders,
-        body: item.content
+        body: bodyContent,
+        isBase64Encoded: isBase64,
       };
     }
 
     return {
       statusCode: 200,
-      headers,
+      headers: jsonHeaders,
       body: JSON.stringify({
         id: item.id,
         title: item.title,
@@ -96,8 +151,19 @@ exports.handler = async (event, context) => {
       if (!content) {
         return {
           statusCode: 400,
-          headers,
+          headers: jsonHeaders,
           body: JSON.stringify({ error: "Content is required" })
+        };
+      }
+
+      // Validate content size (prevent excessively large uploads)
+      // Data URIs are ~33% larger than raw binary, so allow up to ~15MB raw = ~20MB data URI
+      const MAX_SIZE = 20 * 1024 * 1024; // 20MB
+      if (content.length > MAX_SIZE) {
+        return {
+          statusCode: 413,
+          headers: jsonHeaders,
+          body: JSON.stringify({ error: "File too large. Maximum size is 20MB." })
         };
       }
 
@@ -123,7 +189,7 @@ exports.handler = async (event, context) => {
 
       return {
         statusCode: 200,
-        headers,
+        headers: jsonHeaders,
         body: JSON.stringify({
           id,
           url,
@@ -134,7 +200,7 @@ exports.handler = async (event, context) => {
     } catch (err) {
       return {
         statusCode: 500,
-        headers,
+        headers: jsonHeaders,
         body: JSON.stringify({ error: "Failed to parse publish body: " + err.message })
       };
     }
@@ -142,7 +208,7 @@ exports.handler = async (event, context) => {
 
   return {
     statusCode: 405,
-    headers,
+    headers: jsonHeaders,
     body: JSON.stringify({ error: "Method not allowed" })
   };
 };
