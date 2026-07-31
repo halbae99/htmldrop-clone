@@ -1,4 +1,4 @@
-# htmldrop-clone 𞔅
+# htmldrop-clone ðž”…
 
 A lightweight, modern replica of `htmldrop.link `built with **React (Vite) ** on the frontend and **Netlify Functions** on the backend. This allows users to drop HTML/MD/TXT content, protect it with an optional password, define a Custom Time-to-Live (TTL), and share it immediately using dynamic links.
 
@@ -9,7 +9,8 @@ A lightweight, modern replica of `htmldrop.link `built with **React (Vite) ** on
 4. **Time-To-Live (TTL)**: Configurable expiration limits (1, 3, 7, 30 days) to keep temporary items clean.
 5. **No Databases Required**: Fully self-contained inside a warm Netlify Functions memory context, optimized for ease of use. (Can be easily extended to Supabase or Upstash Redis if persistent high-scale storage is needed!).
 
-## �ch One-Click Deploy to Netlify
+## ðžch One-Click Deploy to Netlify
 1. Connect this repository to your Netlify account.
 2. Add build command `npm run build` and directory `dist`.
 3. Done!
+<!-- build trigger: 2026-07-31T08:18:29.292924 -->
