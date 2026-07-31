@@ -45,6 +45,11 @@ function stripDataUriPrefix(dataUri) {
   return dataUri.substring(commaIndex + 1);
 }
 
+// Check if mimeType is a HWP/HWPX file (eligible for rhwp editor)
+function isHwpMime(mimeType) {
+  return mimeType && (mimeType.includes('haansofthwp') || mimeType.includes('haansoft'));
+}
+
 exports.handler = async (event, context) => {
   // CORS Headers
   const jsonHeaders = {
@@ -110,6 +115,7 @@ exports.handler = async (event, context) => {
       const responseHeaders = {
         'Access-Control-Allow-Origin': '*',
         'Content-Type': rawContentType,
+        'Content-Disposition': `inline; filename="${encodeURIComponent(item.title || 'document')}"`,
       };
 
       if (isBase64) {
@@ -186,16 +192,24 @@ exports.handler = async (event, context) => {
       const host = event.headers.host || 'localhost:3000';
       const protocol = host.includes('localhost') ? 'http' : 'https';
       const url = `${protocol}://${host}/view/${id}`;
+      const rawUrl = `${protocol}://${host}/.netlify/functions/publish?id=${id}&raw=true`;
+
+      const response = {
+        id,
+        url,
+        rawUrl,
+        expires_at: newItem.expires_at
+      };
+
+      // If HWP/HWPX, also include rhwp editor URL
+      if (isHwpMime(mimeType)) {
+        response.rhwpUrl = `${protocol}://${host}/rhwp-view/${id}`;
+      }
 
       return {
         statusCode: 200,
         headers: jsonHeaders,
-        body: JSON.stringify({
-          id,
-          url,
-          rawUrl: `${protocol}://${host}/.netlify/functions/publish?id=${id}&raw=true`,
-          expires_at: newItem.expires_at
-        })
+        body: JSON.stringify(response)
       };
     } catch (err) {
       return {
