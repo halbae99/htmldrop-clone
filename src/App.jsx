@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Upload, FileText, CheckCircle2, Copy, ExternalLink, ArrowRight, Shield, Calendar, RefreshCw, AlertTriangle, ArrowLeft, Download, FileIcon, Edit3 } from 'lucide-react';
 
+// API base URL - injected by Vite at build time
+const API_BASE = typeof __API_BASE__ !== 'undefined' ? __API_BASE__ : '';
+
 // MIME type mapping for file extensions
 const MIME_MAP = {
   html: 'text/html; charset=utf-8',
@@ -65,7 +68,7 @@ async function fetchRawFile(id, password = '') {
   if (password) {
     headers['x-drop-password'] = password;
   }
-  const res = await fetch(`/.netlify/functions/publish?id=${id}&raw=true`, { headers });
+  const res = await fetch(`${API_BASE}/.netlify/functions/publish?id=${id}&raw=true`, { headers });
   if (!res.ok) throw new Error(`Failed to fetch raw file: ${res.status}`);
   return res.arrayBuffer();
 }
@@ -142,7 +145,7 @@ function RhwpEditor({ dropId, dropTitle, password }) {
             <span className="text-gray-400">{pageCount} 페이지</span>
           )}
           <a
-            href={`/.netlify/functions/publish?id=${dropId}&raw=true${password ? '&password=' + encodeURIComponent(password) : ''}`}
+            href={`${API_BASE}/.netlify/functions/publish?id=${dropId}&raw=true${password ? '&password=' + encodeURIComponent(password) : ''}`}
             download={dropTitle}
             className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 text-xs"
           >
@@ -171,7 +174,7 @@ function RhwpEditor({ dropId, dropTitle, password }) {
             </p>
             <div className="flex gap-3 justify-center">
               <a
-                href={`/.netlify/functions/publish?id=${dropId}&raw=true${password ? '&password=' + encodeURIComponent(password) : ''}`}
+                href={`${API_BASE}/.netlify/functions/publish?id=${dropId}&raw=true${password ? '&password=' + encodeURIComponent(password) : ''}`}
                 download={dropTitle}
                 className="inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-600 text-white font-semibold px-6 py-3 rounded-lg transition"
               >
@@ -217,6 +220,20 @@ function App() {
   const [viewStatus, setViewStatus] = useState('loading'); // loading, ready, password_required, error
 
   useEffect(() => {
+    // Check for SPA redirect from 404.html (GitHub Pages)
+    const redirectPath = sessionStorage.getItem('redirect');
+    if (redirectPath) {
+      sessionStorage.removeItem('redirect');
+      // Extract the path relative to base
+      const base = '/htmldrop-clone';
+      const relPath = redirectPath.startsWith(base) ? redirectPath.slice(base.length) : redirectPath;
+      if (relPath && relPath !== '/') {
+        setCurrentPath(relPath);
+        window.history.replaceState({}, '', base + relPath);
+        return;
+      }
+    }
+
     const handleLocationChange = () => {
       setCurrentPath(window.location.pathname);
     };
@@ -248,7 +265,7 @@ function App() {
         headers['x-drop-password'] = withPassword;
       }
       
-      const res = await fetch(`/.netlify/functions/publish?id=${id}`, { headers });
+      const res = await fetch(`${API_BASE}/.netlify/functions/publish?id=${id}`, { headers });
       
       if (res.status === 401) {
         setViewStatus('password_required');
@@ -330,7 +347,7 @@ function App() {
     if (!content) return;
     setUploadStatus('uploading');
     try {
-      const response = await fetch('/.netlify/functions/publish', {
+      const response = await fetch(`${API_BASE}/.netlify/functions/publish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
