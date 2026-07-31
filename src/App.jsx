@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Upload, FileText, CheckCircle2, Copy, ExternalLink, ArrowRight, Shield, Calendar, RefreshCw, AlertTriangle, ArrowLeft, Download, FileIcon } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Upload, FileText, CheckCircle2, Copy, ExternalLink, ArrowRight, Shield, Calendar, RefreshCw, AlertTriangle, ArrowLeft, Download, FileIcon, Edit3 } from 'lucide-react';
 
 // MIME type mapping for file extensions
 const MIME_MAP = {
@@ -18,6 +18,9 @@ const TEXT_EXTENSIONS = ['html', 'htm', 'md', 'txt'];
 // Binary files that need Base64 encoding
 const BINARY_EXTENSIONS = ['pdf', 'hwp', 'hwpx'];
 
+// Files that can be opened with rhwp editor
+const RHWP_EXTENSIONS = ['hwp', 'hwpx'];
+
 // All supported extensions
 const SUPPORTED_EXTENSIONS = [...TEXT_EXTENSIONS, ...BINARY_EXTENSIONS];
 
@@ -32,6 +35,10 @@ function getMimeType(filename) {
 
 function isTextFile(filename) {
   return TEXT_EXTENSIONS.includes(getExtension(filename));
+}
+
+function isRhwpFile(filename) {
+  return RHWP_EXTENSIONS.includes(getExtension(filename));
 }
 
 function readFileAsText(file) {
@@ -50,6 +57,145 @@ function readFileAsDataURL(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// Fetch a file from the publish API (raw=true for binary) and return as ArrayBuffer
+async function fetchRawFile(id, password = '') {
+  const headers = {};
+  if (password) {
+    headers['x-drop-password'] = password;
+  }
+  const res = await fetch(`/.netlify/functions/publish?id=${id}&raw=true`, { headers });
+  if (!res.ok) throw new Error(`Failed to fetch raw file: ${res.status}`);
+  return res.arrayBuffer();
+}
+
+// RhwpEditor component — embeds the rhwp-studio editor for HWP/HWPX files
+function RhwpEditor({ dropId, dropTitle, password }) {
+  const containerRef = useRef(null);
+  const editorRef = useRef(null);
+  const [status, setStatus] = useState('loading'); // loading, ready, error
+  const [pageCount, setPageCount] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initEditor() {
+      try {
+        // Dynamically import @rhwp/editor (it's an ESM module)
+        const { createEditor } = await import('@rhwp/editor');
+
+        if (cancelled) return;
+
+        const editor = await createEditor(containerRef.current, {
+          width: '100%',
+          height: '100%',
+        });
+        editorRef.current = editor;
+
+        // Fetch the raw HWP/HWPX file
+        const buffer = await fetchRawFile(dropId, password);
+
+        if (cancelled) return;
+
+        const result = await editor.loadFile(buffer, dropTitle || 'document.hwp', {
+          suppressDialogs: true,
+        });
+
+        setPageCount(result.pageCount);
+        setStatus('ready');
+      } catch (err) {
+        console.error('RhwpEditor init error:', err);
+        if (!cancelled) {
+          setStatus('error');
+        }
+      }
+    }
+
+    initEditor();
+
+    return () => {
+      cancelled = true;
+      if (editorRef.current) {
+        try {
+          editorRef.current.destroy();
+        } catch (e) {
+          // ignore
+        }
+        editorRef.current = null;
+      }
+    };
+  }, [dropId, dropTitle, password]);
+
+  return (
+    <div className="w-full min-h-screen flex flex-col bg-[#f5f5f5]">
+      {/* Toolbar header */}
+      <div className="bg-[#0f1626] text-gray-300 text-xs px-4 py-2 flex justify-between items-center border-b border-[#1e293b] shrink-0">
+        <span
+          className="font-semibold flex items-center gap-1.5 text-cyan-400 cursor-pointer"
+          onClick={() => window.history.back()}
+        >
+          💧 htmldrop <span className="text-gray-500">| rhwp 에디터</span>
+        </span>
+        <div className="flex items-center gap-3">
+          {pageCount && (
+            <span className="text-gray-400">{pageCount} 페이지</span>
+          )}
+          <a
+            href={`/.netlify/functions/publish?id=${dropId}&raw=true${password ? '&password=' + encodeURIComponent(password) : ''}`}
+            download={dropTitle}
+            className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 text-xs"
+          >
+            <Download className="w-3 h-3" /> 다운로드
+          </a>
+        </div>
+      </div>
+
+      {/* Editor container */}
+      {status === 'loading' && (
+        <div className="flex-1 flex items-center justify-center bg-[#0f1626]">
+          <div className="flex flex-col items-center gap-3">
+            <RefreshCw className="animate-spin text-cyan-400 w-10 h-10" />
+            <p className="text-gray-400">rhwp 에디터를 불러오는 중...</p>
+          </div>
+        </div>
+      )}
+
+      {status === 'error' && (
+        <div className="flex-1 flex items-center justify-center bg-[#0f1626]">
+          <div className="bg-[#0f1626] border border-[#1e293b] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
+            <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+            <h2 className="text-xl font-bold mb-2 text-white">에디터 로드 실패</h2>
+            <p className="text-gray-400 text-sm mb-6">
+              rhwp 에디터를 불러오지 못했습니다. 파일을 다운로드하여 로컬에서 열어보세요.
+            </p>
+            <div className="flex gap-3 justify-center">
+              <a
+                href={`/.netlify/functions/publish?id=${dropId}&raw=true${password ? '&password=' + encodeURIComponent(password) : ''}`}
+                download={dropTitle}
+                className="inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-600 text-white font-semibold px-6 py-3 rounded-lg transition"
+              >
+                <Download className="w-4 h-4" /> 파일 다운로드
+              </a>
+              <button
+                onClick={() => window.history.back()}
+                className="inline-flex items-center gap-2 bg-[#1e293b] hover:bg-[#2d3d5a] text-gray-300 font-semibold px-6 py-3 rounded-lg transition"
+              >
+                <ArrowLeft className="w-4 h-4" /> 뒤로 가기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* The editor iframe */}
+      <div
+        ref={containerRef}
+        className="flex-1 w-full"
+        style={{ display: status === 'ready' ? 'block' : 'none' }}
+      />
+    </div>
+  );
 }
 
 function App() {
@@ -81,7 +227,12 @@ function App() {
   // Fetch target page if the path matches a view
   useEffect(() => {
     const match = currentPath.match(/^\/view\/([a-zA-Z0-9-]+)/);
-    if (match) {
+    const rhwpMatch = currentPath.match(/^\/rhwp-view\/([a-zA-Z0-9-]+)/);
+    
+    if (rhwpMatch) {
+      // rhwp editor route — handled in render
+      setViewStatus('rhwp');
+    } else if (match) {
       const id = match[1];
       fetchPage(id);
     } else {
@@ -202,6 +353,7 @@ function App() {
         id: data.id,
         title: title || 'Untitled Drop',
         url: data.url,
+        rhwpUrl: data.rhwpUrl,
         expires_at: data.expires_at,
         created_at: new Date().toISOString()
       });
@@ -211,9 +363,8 @@ function App() {
     }
   };
 
-  const copyToClipboard = () => {
-    if (!publishResult) return;
-    navigator.clipboard.writeText(publishResult.url);
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -226,7 +377,20 @@ function App() {
   // Helper to check if content is a data URI (binary)
   const isDataUri = (str) => str && str.startsWith('data:');
 
-  // 1. VIEW VIEW MODE (Rendering actual dropped content)
+  // 1. RHWP VIEW MODE — HWP/HWPX files open in rhwp editor
+  if (currentPath.startsWith('/rhwp-view/')) {
+    const dropId = currentPath.split('/rhwp-view/')[1];
+
+    return (
+      <RhwpEditor
+        dropId={dropId}
+        dropTitle={viewData?.title || 'document.hwp'}
+        password=""
+      />
+    );
+  }
+
+  // 2. VIEW VIEW MODE (Rendering actual dropped content)
   if (currentPath.startsWith('/view/')) {
     const dropId = currentPath.split('/view/')[1];
 
@@ -280,7 +444,7 @@ function App() {
           const isHwp = vmime.includes('haansoft');
           const isDataUriContent = isDataUri(viewData.content);
 
-          // HWP/HWPX: Google Docs Viewer + download
+          // HWP/HWPX: rhwp editor link + download
           if (isHwp) {
             return (
               <div className="w-full min-h-screen flex flex-col bg-[#0f1626]">
@@ -294,20 +458,25 @@ function App() {
                   <FileIcon className="w-20 h-20 text-gray-500" />
                   <h3 className="text-xl font-bold text-white">{viewData.title}</h3>
                   <p className="text-gray-400 text-sm">
-                    HWP/HWPX 파일입니다. 브라우저에서 직접 미리보기가 불가능합니다.
+                    HWP/HWPX 파일입니다. rhwp 에디터로 열어서 편집하거나, 다운로드할 수 있습니다.
                   </p>
                   <div className="flex gap-4 flex-wrap justify-center">
+                    {/* Primary: rhwp editor */}
+                    <button
+                      onClick={() => navigateTo(`/rhwp-view/${dropId}`)}
+                      className="inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-600 text-white font-semibold px-6 py-3 rounded-lg transition"
+                    >
+                      <Edit3 className="w-4 h-4" /> rhwp 에디터로 열기
+                    </button>
                     <a
                       href={viewData.content}
                       download={viewData.title}
-                      className="inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-600 text-white font-semibold px-6 py-3 rounded-lg transition"
+                      className="inline-flex items-center gap-2 bg-[#1e293b] hover:bg-[#2d3d5a] text-gray-300 font-semibold px-6 py-3 rounded-lg transition"
                     >
                       <Download className="w-4 h-4" /> 파일 다운로드
                     </a>
                     <button
                       onClick={() => {
-                        // Google Docs Viewer — requires the file to be accessible via URL
-                        // For data URIs, open in new tab for download
                         window.open(viewData.content, '_blank');
                       }}
                       className="inline-flex items-center gap-2 bg-[#1e293b] hover:bg-[#2d3d5a] text-gray-300 font-semibold px-6 py-3 rounded-lg transition"
@@ -315,9 +484,6 @@ function App() {
                       <ExternalLink className="w-4 h-4" /> 새 탭에서 열기
                     </button>
                   </div>
-                  <p className="text-gray-500 text-xs mt-4">
-                    * Google Docs Viewer는 다운로드된 파일을 열 때만 작동합니다. 파일을 먼저 다운로드해주세요.
-                  </p>
                 </div>
               </div>
             );
@@ -511,6 +677,16 @@ function App() {
               </div>
             </div>
 
+            {/* HWP/HWPX hint */}
+            {currentFile && isRhwpFile(currentFile.name) && (
+              <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3 flex items-center gap-3">
+                <Edit3 className="w-5 h-5 text-cyan-400 shrink-0" />
+                <p className="text-cyan-300 text-sm">
+                  HWP/HWPX 파일입니다. 공유하면 rhwp 에디터로 열어서 편집할 수 있습니다.
+                </p>
+              </div>
+            )}
+
             {/* Publish Button */}
             {uploadStatus !== 'success' ? (
               <button
@@ -535,6 +711,8 @@ function App() {
               <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-5 text-center space-y-3">
                 <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto" />
                 <p className="text-green-400 font-semibold">공유 링크가 생성되었습니다!</p>
+
+                {/* Standard view URL */}
                 <div className="flex items-center gap-2 bg-[#0a0f1a] border border-[#2d3d5a] rounded-lg px-4 py-2.5">
                   <input
                     type="text"
@@ -543,13 +721,33 @@ function App() {
                     className="flex-1 bg-transparent text-white text-sm focus:outline-none"
                   />
                   <button
-                    onClick={copyToClipboard}
+                    onClick={() => copyToClipboard(publishResult?.url || '')}
                     className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 text-sm"
                   >
                     {copied ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                     {copied ? '복사됨' : '복사'}
                   </button>
                 </div>
+
+                {/* RHWP editor URL — only for HWP/HWPX files */}
+                {publishResult?.rhwpUrl && (
+                  <div className="flex items-center gap-2 bg-[#0a0f1a] border border-cyan-500/50 rounded-lg px-4 py-2.5">
+                    <Edit3 className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <input
+                      type="text"
+                      value={publishResult.rhwpUrl}
+                      readOnly
+                      className="flex-1 bg-transparent text-cyan-300 text-sm focus:outline-none"
+                    />
+                    <button
+                      onClick={() => copyToClipboard(publishResult.rhwpUrl)}
+                      className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 text-sm shrink-0"
+                    >
+                      <Copy className="w-4 h-4" /> 복사
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex gap-3 justify-center">
                   <button
                     onClick={() => navigateTo(publishResult?.url ? new URL(publishResult.url).pathname : '/')}
@@ -557,6 +755,14 @@ function App() {
                   >
                     <ExternalLink className="w-4 h-4" /> 미리보기
                   </button>
+                  {publishResult?.rhwpUrl && (
+                    <button
+                      onClick={() => navigateTo(new URL(publishResult.rhwpUrl).pathname)}
+                      className="inline-flex items-center gap-1.5 text-green-400 hover:text-green-300 text-sm font-semibold"
+                    >
+                      <Edit3 className="w-4 h-4" /> rhwp 에디터
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setContent('');
